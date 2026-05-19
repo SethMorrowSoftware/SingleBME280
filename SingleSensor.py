@@ -342,6 +342,7 @@ def _init_bme280(address_str='0x76'):
         except Exception:
             continue
 
+    bus.close()
     raise RuntimeError("BME280 not found at 0x76 or 0x77")
 
 
@@ -355,6 +356,16 @@ def _init_scd40():
 
     i2c = board.I2C()
     scd = adafruit_scd4x.SCD4X(i2c)
+
+    # The SCD40 only accepts start_periodic_measurement() while idle. If a
+    # previous run was killed mid-measurement (the service restarts often),
+    # the sensor is still measuring and the start below would be rejected.
+    # Stopping first forces a known idle state; harmless if already idle.
+    try:
+        scd.stop_periodic_measurement()
+    except Exception as e:
+        logger.debug(f"SCD40 pre-init stop_periodic_measurement: {e}")
+
     scd.start_periodic_measurement()
     logger.info("SCD40 initialised and periodic measurement started")
     # Give the sensor time to produce its first reading
@@ -387,6 +398,77 @@ def init_sensor(sensor_type, bme280_address='0x76'):
             logger.info(f"SCD40 not found ({e})")
 
     raise RuntimeError("No supported sensor detected. Check wiring and I2C.")
+
+
+def _log_i2c_diagnostics():
+    """Dump I2C bus state after a failed sensor init, to pinpoint the cause.
+
+    Runs only on the final failed attempt, so it is allowed to be verbose.
+    Every step is guarded: a diagnostic must never crash the caller.
+    """
+    import glob
+    import fcntl
+
+    logger.error("--- I2C diagnostics (sensor init failed) ---")
+
+    try:
+        with open('/proc/device-tree/model') as f:
+            logger.error(f"I2C diag: board = {f.read().rstrip(chr(0))}")
+    except Exception as e:
+        logger.error(f"I2C diag: board model unavailable ({e})")
+
+    buses = sorted(glob.glob('/dev/i2c-*'))
+    if not buses:
+        logger.error("I2C diag: no /dev/i2c-* devices exist - I2C is disabled. "
+                     "Enable it (raspi-config -> Interface Options -> I2C) and "
+                     "reboot.")
+        return
+    logger.error(f"I2C diag: kernel buses = {', '.join(buses)}")
+
+    # Probe the sensor addresses on every kernel bus with a 1-byte read, the
+    # same method `i2cdetect` uses. Stdlib only, so this works even on an
+    # SCD40-only Pi that never installed smbus2.
+    I2C_SLAVE = 0x0703
+    known = ((0x62, 'SCD40'), (0x76, 'BME280'), (0x77, 'BME280'))
+    for bus_path in buses:
+        try:
+            fd = os.open(bus_path, os.O_RDWR)
+        except OSError as e:
+            logger.error(f"I2C diag: {bus_path} cannot be opened ({e})")
+            continue
+        seen = []
+        try:
+            for addr, name in known:
+                try:
+                    fcntl.ioctl(fd, I2C_SLAVE, addr)
+                    os.read(fd, 1)
+                    seen.append(f"{hex(addr)}={name}")
+                except OSError:
+                    pass
+        finally:
+            os.close(fd)
+        logger.error(f"I2C diag: {bus_path} responders: "
+                     f"{', '.join(seen) if seen else 'none'}")
+
+    # Show what the Adafruit/Blinka stack sees - that is the bus the SCD40
+    # code actually uses. If the kernel scan above finds 0x62 but this list
+    # does not, Blinka is on a different bus, or the bus speed is too high
+    # for the SCD40's clock stretching.
+    try:
+        import board
+        i2c = board.I2C()
+        while not i2c.try_lock():
+            time.sleep(0)
+        try:
+            blinka_seen = sorted(hex(a) for a in i2c.scan())
+        finally:
+            i2c.unlock()
+        logger.error(f"I2C diag: Blinka board.I2C() sees: "
+                     f"{', '.join(blinka_seen) if blinka_seen else 'nothing'}")
+    except Exception as e:
+        logger.error(f"I2C diag: Blinka scan failed ({e})")
+
+    logger.error("--- end I2C diagnostics ---")
 
 
 def read_sensor(sensor_info):
@@ -560,6 +642,7 @@ def run_monitoring():
             log_error(f"Sensor init attempt {attempt}/{init_attempts} failed: {e}")
             if attempt == init_attempts:
                 monitoring_error = str(e)
+                _log_i2c_diagnostics()
                 return
             # Exponential-ish backoff, capped at ~15s.
             shutdown_event.wait(timeout=min(15, 2 * attempt))
