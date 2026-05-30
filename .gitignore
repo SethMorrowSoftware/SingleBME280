@@ -7,3 +7,8 @@ __pycache__/
 
 # Runtime files
 install.lock
+
+# Live per-device settings — kept out of git so `git pull` and re-running
+# install.sh never clobber a deployed sensor's configuration. Seeded from the
+# tracked SingleSensorSettings.conf template on first run.
+SingleSensorSettings.local.conf

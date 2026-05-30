@@ -21,8 +21,9 @@ Each Pi Zero runs `SingleSensor.py`, which:
 - Auto-detects the connected sensor (BME280 or SCD40)
 - Reads temperature, humidity, and CO2 (SCD40 only) on a configurable interval
 - POSTs JSON to the dashboard API over HTTPS
-- Sends Slack alerts when temperature thresholds are exceeded
-- Serves a local settings page on port 5000
+- Sends Slack alerts on high/low temperature, high CO2 (SCD40), and high/low humidity thresholds
+- Serves a local dark-themed settings page on port 5000 (self-contained — works with no internet)
+- Stores live settings outside git so `git pull` + re-install never loses them
 
 ## Prerequisites
 
@@ -77,7 +78,14 @@ git clone https://github.com/morroware/SingleBME280.git SingleSensor
 cd SingleSensor
 ```
 
-Edit `SingleSensorSettings.conf`:
+Configure the sensor one of two ways:
+
+- **Web UI (recommended):** finish the install below, then open
+  `http://<pi_ip>:5000/settings` and fill in the dark-themed settings page.
+- **Edit the template:** edit `SingleSensorSettings.conf` *before* the first
+  run. On first run its contents are copied into a gitignored live file
+  (`SingleSensorSettings.local.conf`) that the app reads/writes from then on.
+
 ```ini
 [General]
 sensor_location_name = kitchen        # Unique name for this sensor
@@ -85,13 +93,23 @@ sensor_type = auto                    # auto | bme280 | scd40
 minutes_between_reads = 5
 sensor_threshold_temp = 88.0          # High temp alert (°F)
 sensor_lower_threshold_temp = 40.0    # Low temp alert (°F)
-threshold_count = 3                   # Consecutive readings before alert
+threshold_count = 3                   # Consecutive readings before any alert
 slack_channel = alerts
 slack_api_token = xoxb-your-token
 dashboard_url = https://yourdomain.com/dashboard/api/submit.php
 dashboard_api_key = your-secret-api-key
 bme280_address = 0x76                 # 0x76 or 0x77
+
+# Optional air-quality alerts (omit or set 0 to disable):
+# sensor_co2_threshold = 1500           # High CO2 alert (ppm, SCD40 only)
+# sensor_humidity_high_threshold = 70   # High humidity alert (%)
+# sensor_humidity_low_threshold = 20    # Low humidity alert (%)
 ```
+
+> **Your live settings live in `SingleSensorSettings.local.conf`, which is
+> gitignored.** That's what makes updates safe: `git pull` and re-running
+> `install.sh` never touch it. The tracked `SingleSensorSettings.conf` is just
+> the seed template.
 
 ### 3. Run on boot (systemd)
 
@@ -115,6 +133,24 @@ journalctl -u singlesensor -f
 python3 SingleSensor.py
 ```
 Access settings at `http://<pi_ip>:5000/settings`.
+
+### 5. Updating a deployed sensor
+
+Updates are idempotent and **non-destructive** — your settings are stored in
+the gitignored `SingleSensorSettings.local.conf`, so this never overwrites them:
+
+```bash
+cd ~/SingleSensor
+git pull
+sudo bash install.sh      # re-renders the service; leaves your settings as-is
+```
+
+> **First upgrade from an older checkout:** older installs kept settings in the
+> tracked `SingleSensorSettings.conf`. On the first run after pulling, the app
+> automatically copies those existing values into the new live file, so nothing
+> is lost. To tidy git afterward, you can optionally reset the now-unused
+> template with `git checkout -- SingleSensorSettings.conf` (your real settings
+> are safe in `SingleSensorSettings.local.conf`).
 
 ## Dashboard Setup (cPanel)
 
@@ -316,11 +352,12 @@ logged-in session. Returns `{status, enabled, slack_available, email_available, 
 ```
 SingleSensor/
 ├── SingleSensor.py              # Pi Zero sensor script
-├── SingleSensorSettings.conf    # Pi Zero config
+├── SingleSensorSettings.conf    # Seed template (tracked)
+├── SingleSensorSettings.local.conf  # Live per-device settings (gitignored, auto-created)
 ├── singlesensor.service         # systemd unit for auto-start on boot
 ├── install.sh                   # One-command installer for the systemd service
 ├── templates/
-│   └── settings.html            # Pi Zero web settings UI (Flask template)
+│   └── settings.html            # Pi Zero web settings UI (self-contained dark theme)
 ├── readme.md
 └── dashboard/                   # Self-hosted on cPanel
     ├── index.php                # Dashboard UI
