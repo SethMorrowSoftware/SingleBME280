@@ -52,13 +52,44 @@ try {
         // Column likely already exists – ignore
     }
 
-    // Add offline_alerted column for Slack offline alerts
-    try {
-        $pdo->exec("ALTER TABLE sensors ADD COLUMN offline_alerted TINYINT(1) NOT NULL DEFAULT 0");
-        $success[] = 'Added column: sensors.offline_alerted';
-    } catch (PDOException $e) {
-        // Column likely already exists – ignore
+    // Add per-sensor offline-alert columns. Each ALTER is independent so an
+    // already-present column doesn't abort the rest.
+    $alertColumns = [
+        'offline_alerted'       => "ALTER TABLE sensors ADD COLUMN offline_alerted TINYINT(1) NOT NULL DEFAULT 0",
+        'alerts_enabled'        => "ALTER TABLE sensors ADD COLUMN alerts_enabled TINYINT(1) NOT NULL DEFAULT 0",
+        'alert_offline_minutes' => "ALTER TABLE sensors ADD COLUMN alert_offline_minutes INT NULL",
+        'alert_slack'           => "ALTER TABLE sensors ADD COLUMN alert_slack TINYINT(1) NOT NULL DEFAULT 1",
+        'alert_email'           => "ALTER TABLE sensors ADD COLUMN alert_email TINYINT(1) NOT NULL DEFAULT 0",
+        'alert_email_to'        => "ALTER TABLE sensors ADD COLUMN alert_email_to VARCHAR(255) NULL",
+        'alert_recovery'        => "ALTER TABLE sensors ADD COLUMN alert_recovery TINYINT(1) NOT NULL DEFAULT 1",
+        'alert_repeat_minutes'  => "ALTER TABLE sensors ADD COLUMN alert_repeat_minutes INT NOT NULL DEFAULT 0",
+        'alert_count'           => "ALTER TABLE sensors ADD COLUMN alert_count INT NOT NULL DEFAULT 0",
+        'alert_last_sent'       => "ALTER TABLE sensors ADD COLUMN alert_last_sent DATETIME NULL",
+        'alert_started_at'      => "ALTER TABLE sensors ADD COLUMN alert_started_at DATETIME NULL",
+    ];
+    foreach ($alertColumns as $col => $ddl) {
+        try {
+            $pdo->exec($ddl);
+            $success[] = 'Added column: sensors.' . $col;
+        } catch (PDOException $e) {
+            // Column likely already exists – ignore
+        }
     }
+
+    // --- alert_events table (offline-alert audit history) ---
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS alert_events (
+            id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+            sensor_id   VARCHAR(100) NOT NULL,
+            event_type  VARCHAR(20)  NOT NULL,
+            channels    VARCHAR(64)  NOT NULL DEFAULT '',
+            message     VARCHAR(255) NULL,
+            created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_sensor_time (sensor_id, created_at),
+            INDEX idx_created (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+    $success[] = 'Created table: alert_events';
 
     // --- readings table ---
     $pdo->exec("

@@ -146,34 +146,74 @@ define('SESSION_LIFETIME', 7 * 24 * 60 * 60);  // 7 days
 
 define('RETENTION_DAYS', 90);
 define('APP_TIMEZONE', 'America/New_York');
-define('OFFLINE_MINUTES', 15);
+define('OFFLINE_MINUTES', 15);           // minutes with no data = "offline" dot
 
-// Optional – Slack offline alerts. Leave SLACK_API_TOKEN blank to disable.
+// --- Offline-alert delivery (configured PER SENSOR in the dashboard) ---
+// These are the shared credentials/defaults the per-sensor toggles use.
+
+// Slack (leave blank to make Slack delivery unavailable)
 define('SLACK_API_TOKEN', '');           // xoxb- bot token (same one used by sensors)
 define('SLACK_CHANNEL', '');             // e.g. alerts
-define('OFFLINE_ALERT_MINUTES', 60);
+
+// Email via the host's mail() (leave FROM blank to make email unavailable)
+define('ALERT_EMAIL_FROM', '');          // e.g. sensors@yourdomain.com
+define('ALERT_EMAIL_FROM_NAME', 'Sensor Dashboard');
+define('ALERT_EMAIL_TO', '');            // default recipient if a sensor sets none
+
+define('OFFLINE_ALERT_MINUTES', 60);     // default threshold; overridable per sensor
+define('ALERT_HISTORY_RETENTION_DAYS', 90);
 ```
 
 > **Important**: change `DASHBOARD_PASSWORD_HASH` before exposing the
 > dashboard. The shipped default is a placeholder and must not be reused
 > on a public deployment.
 
-### 3a. (Optional) Slack offline alerts
+### 3a. Per-sensor offline alerts
 
-The dashboard can post to Slack when a sensor has not reported for more than
-`OFFLINE_ALERT_MINUTES` (default 60). It uses the same `chat.postMessage`
-endpoint the Pi scripts use, so if you point it at the existing bot token and
-channel, offline alerts land in the same place as temperature alerts.
+Each sensor can be **independently** configured to alert when it stops
+reporting. Open the dashboard, click the **gear (Manage sensors)** icon, and
+expand **Offline alerts** for any sensor:
 
-- Fill in `SLACK_API_TOKEN` and `SLACK_CHANNEL` in `config.php`.
-- The checks piggyback on existing sensor traffic and dashboard refreshes, so
-  no cron is required. If you prefer an explicit cron, hit
-  `api/check_offline.php` with the `X-API-Key` header.
-- Leaving `SLACK_API_TOKEN` blank disables the feature entirely (drop-in safe).
-- On upgrade, either re-run `install.php` (after removing `install.lock`) or
-  let the helper add the `sensors.offline_alerted` column on its first run.
-- Alert claims are atomic, so running multiple checks concurrently (piggyback
-  + cron) will not produce duplicate Slack messages.
+| Option | Description |
+|--------|-------------|
+| **Enable** | Master on/off for this sensor's offline alerts. |
+| **Alert after N minutes** | How long the sensor must be silent before alerting. Blank = use the global `OFFLINE_ALERT_MINUTES` default. |
+| **Slack / Email** | Which channels to deliver over. Each is independent and only selectable if configured in `config.php`. |
+| **Email to** | Per-sensor recipient (falls back to `ALERT_EMAIL_TO`). |
+| **Notify on recovery** | Also send a "back online" message when the sensor reports again. |
+| **Repeat every N minutes** | Re-notify on an interval while still offline (`0` = alert once). |
+
+There's also a **Send test** button per channel to verify delivery.
+
+How it works:
+
+- **The dashboard is a zero-config channel.** A sensor with alerts enabled but
+  no Slack/email selected still surfaces in the dashboard's alert **banner**,
+  the topbar **bell** (with a live count), and the **alert history** — so you
+  get alerting with no external setup at all.
+- **Slack** uses the same `chat.postMessage` endpoint as the Pi scripts; point
+  it at your existing bot token + channel and offline alerts land alongside
+  temperature alerts. Fill in `SLACK_API_TOKEN` / `SLACK_CHANNEL`.
+- **Email** uses the host's `mail()` transport (works out-of-the-box on most
+  cPanel accounts). Set `ALERT_EMAIL_FROM` to an address on your own domain for
+  best deliverability.
+- **History** of every offline / recovery / reminder / test event is recorded
+  and viewable from the bell icon → **Alerts** modal.
+- **No duplicates:** every state change is an atomic claim, so concurrent
+  checks (cron + dashboard piggyback) never double-send.
+- **Upgrades are drop-in:** the new `sensors` columns and `alert_events` table
+  are added automatically on first use (or re-run `install.php` after deleting
+  `install.lock`).
+
+> **Reliable detection needs a cron.** Detecting *absence* of data can't rely on
+> incoming traffic alone, so add a cron job that hits `check_offline.php` every
+> minute or two. The dashboard also runs a best-effort sweep on its own
+> refreshes, but the cron is what guarantees alerts fire even when nobody has
+> the dashboard open:
+>
+> ```
+> */2 * * * * curl -sS -H "X-API-Key: <YOUR_API_KEY>" https://yourdomain.com/dashboard/api/check_offline.php >/dev/null
+> ```
 
 ### 4. Install database tables
 
@@ -191,6 +231,8 @@ Visit `https://yourdomain.com/dashboard/` to see the live dashboard.
 - **CO2 chart**: Shown automatically when SCD40 sensors are present
 - **Time ranges**: 1H, 6H, 24H, 7D, 30D with automatic downsampling for large ranges
 - **Rename sensors**: Set a friendly display name per sensor from the Manage modal (survives future submissions)
+- **Per-sensor offline alerts**: Independent enable, threshold, Slack/email channels, recovery notices, and repeat reminders per sensor (see [Per-sensor offline alerts](#3a-per-sensor-offline-alerts))
+- **Alert UI**: Live offline-alert banner, topbar bell with active-alert count, in-card ALERT badges, and an alert-history timeline
 - **Auto-refresh**: Dashboard updates every 60 seconds
 - **Data retention**: Automatically purges readings older than the configured retention period
 - **Dark theme**: Professional monitoring interface, responsive on mobile
@@ -231,17 +273,43 @@ Returns time-series data for charts.
 
 ### POST `/api/update_sensor.php`
 
-Update the editable fields of a sensor.
+Update the editable fields of a sensor, including its per-sensor alert config.
 
 ```json
 {
-    "sensor_id":     "kitchen",
-    "ip_address":    "192.168.1.42",
-    "location_name": "Kitchen"
+    "sensor_id":             "kitchen",
+    "ip_address":            "192.168.1.42",
+    "location_name":         "Kitchen",
+    "alerts_enabled":        true,
+    "alert_offline_minutes": 30,
+    "alert_slack":           true,
+    "alert_email":           true,
+    "alert_email_to":        "ops@example.com",
+    "alert_recovery":        true,
+    "alert_repeat_minutes":  120
 }
 ```
 
-All fields except `sensor_id` are optional.
+All fields except `sensor_id` are optional. `alert_offline_minutes` blank/`null`
+falls back to the global default; `alert_repeat_minutes` `0` means alert once.
+
+### GET `/api/alerts.php`
+
+Returns `active` (sensors currently alerting) and `history` (recent alert
+events). Query params: `sensor_id` (filter), `limit` (default 100, max 500).
+
+### POST `/api/test_alert.php`
+
+Send a test notification for a sensor to verify delivery.
+
+```json
+{ "sensor_id": "kitchen", "channel": "both" }   // channel: slack | email | both
+```
+
+### GET `/api/check_offline.php`
+
+Runs the offline-alert sweep (intended for cron). Requires `X-API-Key` or a
+logged-in session. Returns `{status, enabled, slack_available, email_available, alerts_sent}`.
 
 ## File Structure
 
@@ -262,23 +330,26 @@ SingleSensor/
     ├── install.php              # One-time DB setup
     ├── .htaccess                # Security rules
     ├── api/
-    │   ├── submit.php           # Data ingestion endpoint
+    │   ├── submit.php           # Data ingestion endpoint (+ recovery alerts)
     │   ├── readings.php         # Chart data endpoint
-    │   ├── sensors.php          # Sensor listing endpoint
-    │   ├── update_sensor.php    # Edit IP / display name
+    │   ├── sensors.php          # Sensor listing (+ per-sensor alert config/state)
+    │   ├── update_sensor.php    # Edit IP / display name / alert config
     │   ├── delete_sensor.php    # Remove a sensor + its readings
     │   ├── layout.php           # Persist UI layout customizations
-    │   └── check_offline.php    # Cron entrypoint for Slack offline alerts
+    │   ├── alerts.php           # Active alerts + alert history
+    │   ├── test_alert.php       # Send a test notification
+    │   └── check_offline.php    # Cron entrypoint for the offline-alert sweep
     ├── includes/
     │   ├── db.php               # Database connection
     │   ├── auth.php             # Session + API-key auth
-    │   └── offline_alerts.php   # Slack offline alert engine
+    │   ├── notify.php           # Slack + email delivery layer
+    │   └── offline_alerts.php   # Per-sensor offline-alert engine
     └── assets/
         ├── css/
         │   └── style.css
         └── js/
             ├── dashboard.js
-            └── modules/         # render / charts / state / drag-drop / manage / api / utils
+            └── modules/         # render / charts / state / drag-drop / manage / alerts / api / utils
 ```
 
 ## Security Notes

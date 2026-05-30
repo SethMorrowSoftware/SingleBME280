@@ -164,8 +164,9 @@ try {
     // Probabilistic cleanup of old data
     maybe_cleanup();
 
-    // Sensor just reported – clear any outstanding offline-alert flag so it
-    // can alert again on its next outage. No-op if Slack alerts are disabled.
+    // Sensor just reported – clear any outstanding offline-alert state and,
+    // if this sensor opted into recovery notices, send a "back online" alert.
+    // No-op if the sensor wasn't in an alert state.
     try {
         offline_alerts_clear_flag($db, $sensorId);
     } catch (Exception $e) {
@@ -173,8 +174,8 @@ try {
         error_log('submit.php offline flag clear error: ' . $e->getMessage());
     }
 
-    // Probabilistic offline check – piggyback on sensor traffic so we don't
-    // need a separate cron. No-op if Slack alerts are disabled.
+    // Probabilistic offline sweep – piggyback on sensor traffic so we don't
+    // strictly need a cron. Cheap no-op when no sensors have alerts enabled.
     maybe_offline_alerts_check(20);
 
     echo json_encode(['status' => 'ok']);
