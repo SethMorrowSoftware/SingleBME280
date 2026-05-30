@@ -90,10 +90,16 @@ detected_sensor_type = None  # Populated by monitoring thread on successful init
 alert_states = {
     'high_temp': False,
     'low_temp': False,
+    'high_co2': False,
+    'high_hum': False,
+    'low_hum': False,
 }
 alert_counters = {
     'high_temp': 0,
     'low_temp': 0,
+    'high_co2': 0,
+    'high_hum': 0,
+    'low_hum': 0,
 }
 
 
@@ -142,7 +148,30 @@ def port_is_free(port):
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-CONF_FILE = 'SingleSensorSettings.conf'
+# The user's LIVE settings live outside git (gitignored) so that `git pull`
+# and re-running install.sh never clobber a deployed sensor's configuration.
+# On first run we seed the live file from the tracked template
+# (SingleSensorSettings.conf) — which, on an already-deployed device, still
+# holds that sensor's real settings in the working tree — falling back to
+# built-in defaults for anything missing.
+TEMPLATE_CONF_FILE = 'SingleSensorSettings.conf'
+CONF_FILE          = 'SingleSensorSettings.local.conf'
+
+# Built-in defaults used to backfill any key the template is missing, so the
+# app can always start with a complete, valid config.
+_DEFAULT_SETTINGS = {
+    'sensor_location_name':        'sensor-location',
+    'sensor_type':                 'auto',
+    'minutes_between_reads':       '5',
+    'sensor_threshold_temp':       '88.0',
+    'sensor_lower_threshold_temp': '40.0',
+    'threshold_count':             '3',
+    'slack_channel':               'alerts',
+    'slack_api_token':             '',
+    'dashboard_url':               'https://yourdomain.com/dashboard/api/submit.php',
+    'dashboard_api_key':           'change-me-to-a-secure-random-key',
+    'bme280_address':              '0x76',
+}
 
 # Keys required regardless of sensor type
 _REQUIRED_KEYS = [
@@ -202,6 +231,24 @@ def read_settings_from_conf(conf_file):
                        f"falling back to 0x76.")
         settings['BME280_ADDRESS'] = '0x76'
 
+    # Optional threshold alerts (None = disabled). These are strictly opt-in:
+    # a blank or zero value disables the alert. CO2 only applies to SCD40.
+    def _opt_num(name, cast):
+        if not config.has_option('General', name):
+            return None
+        raw = config.get('General', name).strip()
+        if raw == '' or raw in ('0', '0.0'):
+            return None
+        try:
+            return cast(raw)
+        except (TypeError, ValueError):
+            logger.warning(f"Invalid {name} {raw!r}; treating the alert as disabled.")
+            return None
+
+    settings['SENSOR_CO2_THRESHOLD']           = _opt_num('SENSOR_CO2_THRESHOLD', lambda x: int(float(x)))
+    settings['SENSOR_HUMIDITY_HIGH_THRESHOLD'] = _opt_num('SENSOR_HUMIDITY_HIGH_THRESHOLD', float)
+    settings['SENSOR_HUMIDITY_LOW_THRESHOLD']  = _opt_num('SENSOR_HUMIDITY_LOW_THRESHOLD', float)
+
     return settings
 
 
@@ -235,8 +282,44 @@ def write_settings_to_conf(conf_file, new_settings):
         if not config.has_section('General'):
             config.add_section('General')
         for k, v in new_settings.items():
-            config.set('General', str(k), str(v))
+            # None (a disabled optional threshold) is written as an empty
+            # string, not the literal "None".
+            config.set('General', str(k), '' if v is None else str(v))
         _atomic_write_config(conf_file, config)
+
+
+def ensure_live_config():
+    """Seed the gitignored live config on first run, then leave it alone.
+
+    Keeping live settings out of git is what lets a user `git pull` and re-run
+    install.sh without losing this sensor's configuration. We prefer the
+    tracked template (which, on an already-deployed device, still contains the
+    real settings in its working tree) and backfill any missing keys from
+    built-in defaults. Idempotent: a no-op once the live config exists.
+    """
+    with _CONFIG_LOCK:
+        if os.path.exists(CONF_FILE):
+            return
+        config = configparser.ConfigParser()
+        seeded_from = 'defaults'
+        if os.path.exists(TEMPLATE_CONF_FILE):
+            try:
+                config.read(TEMPLATE_CONF_FILE)
+                if config.has_section('General'):
+                    seeded_from = 'template'
+            except Exception as e:
+                logger.warning(f"Could not read template {TEMPLATE_CONF_FILE}: {e}")
+        if not config.has_section('General'):
+            config.add_section('General')
+        # Backfill any key the template lacked so the app always starts valid.
+        for k, v in _DEFAULT_SETTINGS.items():
+            if not config.has_option('General', k):
+                config.set('General', k, v)
+        try:
+            _atomic_write_config(CONF_FILE, config)
+            logger.info(f"Seeded live config {CONF_FILE} from {seeded_from}.")
+        except Exception as e:
+            log_error(f"Failed to seed live config {CONF_FILE}: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +345,28 @@ def send_slack_alert(message, settings):
     except Exception as e:
         log_error(f"Failed to send Slack alert: {e}")
         return False
+
+
+def _handle_simple_alert(key, tripped, detail, label, settings):
+    """Hysteresis + Slack notify for the additive CO2 / humidity alerts.
+
+    Mirrors the temperature-alert pattern (fire once after THRESHOLD_COUNT
+    consecutive trips, send a "normal" notice on recovery) but is kept separate
+    so the field-proven temperature path is untouched. Uses the shared
+    alert_states / alert_counters dicts keyed by `key`.
+    """
+    loc = settings['SENSOR_LOCATION_NAME']
+    count_needed = settings['THRESHOLD_COUNT']
+    if tripped:
+        alert_counters[key] += 1
+        if alert_counters[key] >= count_needed and not alert_states[key]:
+            send_slack_alert(f"{label} alert at {loc}: {detail}", settings)
+            alert_states[key] = True
+    else:
+        alert_counters[key] = 0
+        if alert_states[key]:
+            send_slack_alert(f"{label} normal at {loc}: {detail}", settings)
+            alert_states[key] = False
 
 
 # ---------------------------------------------------------------------------
@@ -634,6 +739,28 @@ def run_monitoring():
                             send_slack_alert(msg, settings)
                             alert_states['low_temp'] = False
 
+                    # --- CO2 high alert (SCD40 only; opt-in) ---
+                    co2_threshold = settings.get('SENSOR_CO2_THRESHOLD')
+                    if co2_threshold is not None and co2 is not None:
+                        _handle_simple_alert(
+                            'high_co2', co2 >= co2_threshold,
+                            f"{co2} ppm (limit {co2_threshold} ppm)",
+                            "High CO2", settings)
+
+                    # --- Humidity alerts (opt-in) ---
+                    hum_high = settings.get('SENSOR_HUMIDITY_HIGH_THRESHOLD')
+                    if hum_high is not None and humidity is not None:
+                        _handle_simple_alert(
+                            'high_hum', humidity >= hum_high,
+                            f"{humidity:.1f}% (limit {hum_high:.0f}%)",
+                            "High humidity", settings)
+                    hum_low = settings.get('SENSOR_HUMIDITY_LOW_THRESHOLD')
+                    if hum_low is not None and humidity is not None:
+                        _handle_simple_alert(
+                            'low_hum', humidity <= hum_low,
+                            f"{humidity:.1f}% (limit {hum_low:.0f}%)",
+                            "Low humidity", settings)
+
                     # --- Log locally (rotating) ---
                     ts = time.strftime('%Y-%m-%d %H:%M:%S')
                     hum_str = f", Humidity: {humidity:.1f}%" if humidity is not None else ""
@@ -674,6 +801,10 @@ def signal_handler(signum, frame):
 if __name__ == '__main__':
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
+
+    # Seed the gitignored live config before anything reads it, so a fresh
+    # checkout (or a `git pull` that only updated code) still starts cleanly.
+    ensure_live_config()
 
     monitoring_thread = None
     try:

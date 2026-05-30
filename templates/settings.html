@@ -3,48 +3,329 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sensor Settings</title>
-    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <title>SingleSensor — Settings</title>
+    <!--
+      Self-contained dark theme: no external CSS/JS so the settings page works
+      even when the Pi has no internet access (common for isolated sensors).
+      Colours mirror the dashboard for a consistent look.
+    -->
     <style>
-        body { margin: 20px; }
-        .form-group { margin-bottom: 1.5rem; }
-        .btn-group-custom { margin-top: 1rem; }
-        .btn-group-custom .btn { margin-right: 0.5rem; }
-        .flash { margin-bottom: 1rem; }
+        :root {
+            --bg-primary:    #0f1115;
+            --bg-secondary:  #1a1d24;
+            --bg-card:       #1e222b;
+            --bg-input:      #141820;
+            --border:        #2a2f3a;
+            --border-light:  #333a47;
+            --text-primary:  #e8eaed;
+            --text-secondary:#9aa0a9;
+            --text-muted:    #5f6672;
+            --accent-blue:   #4a9eff;
+            --accent-green:  #34d399;
+            --accent-red:    #f87171;
+            --accent-amber:  #fbbf24;
+            --radius:        10px;
+            --radius-sm:     6px;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            line-height: 1.5;
+            padding-bottom: 40px;
+        }
+        .wrap { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+
+        /* Header */
+        .topbar {
+            position: sticky; top: 0; z-index: 10;
+            background: linear-gradient(180deg, rgba(26,29,36,0.95), rgba(26,29,36,0.82));
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+        }
+        .topbar-inner {
+            max-width: 760px; margin: 0 auto; padding: 14px 16px;
+            display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+        }
+        .topbar h1 { font-size: 1.15rem; font-weight: 700; letter-spacing: -0.02em; }
+        .topbar .sub { font-size: 0.72rem; color: var(--text-muted); width: 100%; }
+        .status-pill {
+            margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+            font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+            padding: 4px 10px; border-radius: 999px;
+            background: var(--bg-card); border: 1px solid var(--border); color: var(--text-muted);
+        }
+        .status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); }
+        .status-pill.ok    { color: var(--accent-green); border-color: rgba(52,211,153,0.3); }
+        .status-pill.ok .dot    { background: var(--accent-green); box-shadow: 0 0 6px rgba(52,211,153,0.7); }
+        .status-pill.err   { color: var(--accent-red); border-color: rgba(248,113,113,0.3); }
+        .status-pill.err .dot   { background: var(--accent-red); }
+
+        /* Flash messages */
+        .flash {
+            margin: 16px 0 0; padding: 11px 14px; border-radius: var(--radius-sm);
+            font-size: 0.85rem; border: 1px solid transparent;
+        }
+        .flash.success { background: rgba(52,211,153,0.1); border-color: rgba(52,211,153,0.3); color: var(--accent-green); }
+        .flash.error   { background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.3); color: var(--accent-red); }
+
+        /* Cards / sections */
+        .card {
+            background: var(--bg-secondary); border: 1px solid var(--border);
+            border-radius: var(--radius); margin-top: 16px; overflow: hidden;
+        }
+        .card-head { padding: 13px 18px; border-bottom: 1px solid var(--border); }
+        .card-head h2 { font-size: 0.82rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); }
+        .card-head .desc { font-size: 0.74rem; color: var(--text-muted); margin-top: 2px; }
+        .card-body { padding: 6px 18px 16px; }
+
+        .field { padding: 12px 0; border-bottom: 1px solid var(--border); }
+        .field:last-child { border-bottom: none; }
+        .field label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; }
+        .field .hint { font-size: 0.74rem; color: var(--text-muted); margin-top: 6px; }
+        .field .unit { color: var(--text-muted); font-weight: 500; font-size: 0.78rem; }
+
+        input, select {
+            width: 100%; background: var(--bg-input); border: 1px solid var(--border);
+            color: var(--text-primary); padding: 9px 11px; border-radius: var(--radius-sm);
+            font-size: 0.9rem; font-family: inherit; transition: border-color 0.15s;
+        }
+        input:focus, select:focus { outline: none; border-color: var(--accent-blue); box-shadow: 0 0 0 2px rgba(74,158,255,0.15); }
+        input::placeholder { color: var(--text-muted); opacity: 0.7; }
+        select { appearance: none; cursor: pointer;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16' fill='none' stroke='%235f6672' stroke-width='2'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+            background-repeat: no-repeat; background-position: right 11px center; padding-right: 32px; }
+        .mono { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; }
+
+        /* Secret input with show/hide */
+        .secret { position: relative; }
+        .secret input { padding-right: 56px; }
+        .secret .toggle {
+            position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+            background: transparent; border: none; color: var(--text-muted);
+            font-size: 0.72rem; font-weight: 600; cursor: pointer; padding: 6px 8px; border-radius: 4px;
+        }
+        .secret .toggle:hover { color: var(--accent-blue); background: var(--bg-card); }
+
+        /* Footer actions */
+        .actions {
+            position: sticky; bottom: 0; margin-top: 18px;
+            background: linear-gradient(0deg, var(--bg-primary) 70%, transparent);
+            padding: 14px 0 4px; display: flex; gap: 10px; flex-wrap: wrap;
+        }
+        .btn {
+            padding: 10px 18px; border-radius: var(--radius-sm); font-size: 0.88rem; font-weight: 600;
+            border: 1px solid transparent; cursor: pointer; font-family: inherit; transition: all 0.15s;
+        }
+        .btn-primary { background: var(--accent-blue); color: #fff; }
+        .btn-primary:hover { background: #66aeff; }
+        .btn-warn { background: rgba(251,191,36,0.12); color: var(--accent-amber); border-color: rgba(251,191,36,0.3); }
+        .btn-warn:hover { background: rgba(251,191,36,0.2); }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
+        @media (max-width: 520px) { .grid-2 { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1 class="mb-4">Sensor Settings</h1>
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, msg in messages %}
-                    <div class="flash alert alert-{{ 'success' if category == 'success' else 'danger' }}">{{ msg }}</div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-        <form action="/settings" method="post" id="settingsForm">
-            {% for key, value in settings.items() %}
-            <div class="form-group">
-                <label for="{{ key }}">{{ key.replace("_", " ").title() }}</label>
-                {% if key == 'SENSOR_TYPE' %}
-                <select class="form-control" id="{{ key }}" name="{{ key }}">
-                    <option value="auto" {% if value == 'auto' %}selected{% endif %}>Auto-detect</option>
-                    <option value="bme280" {% if value == 'bme280' %}selected{% endif %}>BME280</option>
-                    <option value="scd40" {% if value == 'scd40' %}selected{% endif %}>SCD40</option>
-                </select>
-                {% elif key == 'SLACK_API_TOKEN' or key == 'DASHBOARD_API_KEY' %}
-                <input type="password" class="form-control" id="{{ key }}" name="{{ key }}" value="{{ value }}" autocomplete="off">
-                {% else %}
-                <input type="text" class="form-control" id="{{ key }}" name="{{ key }}" value="{{ value }}">
-                {% endif %}
-            </div>
-            {% endfor %}
-            <div class="btn-group-custom">
-                <button type="submit" name="action" value="save" class="btn btn-primary">Save</button>
-                <button type="submit" name="action" value="reboot" class="btn btn-warning">Save and Reboot</button>
-            </div>
-        </form>
+{% macro fval(key) %}{{ settings[key] if settings.get(key) is not none else '' }}{% endmacro %}
+
+<div class="topbar">
+    <div class="topbar-inner">
+        <h1>SingleSensor</h1>
+        <span class="status-pill" id="statusPill"><span class="dot"></span><span id="statusText">Checking…</span></span>
+        <div class="sub" id="deviceUrl"></div>
     </div>
+</div>
+
+<div class="wrap">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, msg in messages %}
+                <div class="flash {{ 'success' if category == 'success' else 'error' }}">{{ msg }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <form action="/settings" method="post" id="settingsForm" autocomplete="off">
+
+        <!-- Identity & sensor -->
+        <section class="card">
+            <div class="card-head"><h2>Sensor</h2><div class="desc">Identity and how often this device reports.</div></div>
+            <div class="card-body">
+                <div class="field">
+                    <label for="SENSOR_LOCATION_NAME">Sensor name</label>
+                    <input type="text" id="SENSOR_LOCATION_NAME" name="SENSOR_LOCATION_NAME" value="{{ fval('SENSOR_LOCATION_NAME') }}" required maxlength="100">
+                    <div class="hint">Unique name for this device — also used as its ID on the dashboard.</div>
+                </div>
+                <div class="grid-2">
+                    <div class="field">
+                        <label for="SENSOR_TYPE">Sensor type</label>
+                        <select id="SENSOR_TYPE" name="SENSOR_TYPE">
+                            <option value="auto"   {% if settings['SENSOR_TYPE'] == 'auto' %}selected{% endif %}>Auto-detect</option>
+                            <option value="bme280" {% if settings['SENSOR_TYPE'] == 'bme280' %}selected{% endif %}>BME280 (temp + humidity)</option>
+                            <option value="scd40"  {% if settings['SENSOR_TYPE'] == 'scd40' %}selected{% endif %}>SCD40 (temp + humidity + CO₂)</option>
+                        </select>
+                        <div class="hint">Auto-detect works for most setups.</div>
+                    </div>
+                    <div class="field">
+                        <label for="MINUTES_BETWEEN_READS">Read interval <span class="unit">(minutes)</span></label>
+                        <input type="number" id="MINUTES_BETWEEN_READS" name="MINUTES_BETWEEN_READS" value="{{ fval('MINUTES_BETWEEN_READS') }}" min="1" step="1" required>
+                        <div class="hint">How often to read the sensor and report to the dashboard.</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Temperature alerts -->
+        <section class="card">
+            <div class="card-head"><h2>Temperature alerts</h2><div class="desc">Slack alerts when temperature leaves the safe range (°F).</div></div>
+            <div class="card-body">
+                <div class="grid-2">
+                    <div class="field">
+                        <label for="SENSOR_THRESHOLD_TEMP">High temperature <span class="unit">(°F)</span></label>
+                        <input type="number" id="SENSOR_THRESHOLD_TEMP" name="SENSOR_THRESHOLD_TEMP" value="{{ fval('SENSOR_THRESHOLD_TEMP') }}" step="0.1">
+                        <div class="hint">Alert when at or above this.</div>
+                    </div>
+                    <div class="field">
+                        <label for="SENSOR_LOWER_THRESHOLD_TEMP">Low temperature <span class="unit">(°F)</span></label>
+                        <input type="number" id="SENSOR_LOWER_THRESHOLD_TEMP" name="SENSOR_LOWER_THRESHOLD_TEMP" value="{{ fval('SENSOR_LOWER_THRESHOLD_TEMP') }}" step="0.1">
+                        <div class="hint">Alert when at or below this.</div>
+                    </div>
+                </div>
+                <div class="field">
+                    <label for="THRESHOLD_COUNT">Consecutive readings before alerting</label>
+                    <input type="number" id="THRESHOLD_COUNT" name="THRESHOLD_COUNT" value="{{ fval('THRESHOLD_COUNT') }}" min="1" step="1" required>
+                    <div class="hint">Debounce: how many readings in a row must breach a threshold. Applies to all alerts on this page.</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Air-quality alerts (optional) -->
+        <section class="card">
+            <div class="card-head"><h2>Air-quality alerts <span class="unit">— optional</span></h2><div class="desc">Leave a field blank (or 0) to disable that alert.</div></div>
+            <div class="card-body">
+                <div class="field">
+                    <label for="SENSOR_CO2_THRESHOLD">High CO₂ <span class="unit">(ppm — SCD40 only)</span></label>
+                    <input type="number" id="SENSOR_CO2_THRESHOLD" name="SENSOR_CO2_THRESHOLD" value="{{ fval('SENSOR_CO2_THRESHOLD') }}" min="0" step="1" placeholder="disabled">
+                    <div class="hint">Alert when CO₂ is at or above this. Typical comfort limit: 1000–1500 ppm.</div>
+                </div>
+                <div class="grid-2">
+                    <div class="field">
+                        <label for="SENSOR_HUMIDITY_HIGH_THRESHOLD">High humidity <span class="unit">(%)</span></label>
+                        <input type="number" id="SENSOR_HUMIDITY_HIGH_THRESHOLD" name="SENSOR_HUMIDITY_HIGH_THRESHOLD" value="{{ fval('SENSOR_HUMIDITY_HIGH_THRESHOLD') }}" min="0" max="100" step="1" placeholder="disabled">
+                    </div>
+                    <div class="field">
+                        <label for="SENSOR_HUMIDITY_LOW_THRESHOLD">Low humidity <span class="unit">(%)</span></label>
+                        <input type="number" id="SENSOR_HUMIDITY_LOW_THRESHOLD" name="SENSOR_HUMIDITY_LOW_THRESHOLD" value="{{ fval('SENSOR_HUMIDITY_LOW_THRESHOLD') }}" min="0" max="100" step="1" placeholder="disabled">
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Slack -->
+        <section class="card">
+            <div class="card-head"><h2>Slack</h2><div class="desc">Where temperature / air-quality alerts are sent. Leave the token blank to disable.</div></div>
+            <div class="card-body">
+                <div class="field">
+                    <label for="SLACK_API_TOKEN">Bot token</label>
+                    <div class="secret">
+                        <input type="password" class="mono" id="SLACK_API_TOKEN" name="SLACK_API_TOKEN" value="{{ fval('SLACK_API_TOKEN') }}" placeholder="xoxb-…">
+                        <button type="button" class="toggle" data-toggle="SLACK_API_TOKEN">Show</button>
+                    </div>
+                    <div class="hint">A Slack bot token with <span class="mono">chat:write</span>. Leave blank to disable Slack alerts.</div>
+                </div>
+                <div class="field">
+                    <label for="SLACK_CHANNEL">Channel</label>
+                    <input type="text" id="SLACK_CHANNEL" name="SLACK_CHANNEL" value="{{ fval('SLACK_CHANNEL') }}" placeholder="alerts">
+                </div>
+            </div>
+        </section>
+
+        <!-- Dashboard -->
+        <section class="card">
+            <div class="card-head"><h2>Dashboard</h2><div class="desc">Where readings are sent for the web dashboard.</div></div>
+            <div class="card-body">
+                <div class="field">
+                    <label for="DASHBOARD_URL">Submit endpoint</label>
+                    <input type="text" class="mono" id="DASHBOARD_URL" name="DASHBOARD_URL" value="{{ fval('DASHBOARD_URL') }}" placeholder="https://yourdomain.com/dashboard/api/submit.php">
+                </div>
+                <div class="field">
+                    <label for="DASHBOARD_API_KEY">API key</label>
+                    <div class="secret">
+                        <input type="password" class="mono" id="DASHBOARD_API_KEY" name="DASHBOARD_API_KEY" value="{{ fval('DASHBOARD_API_KEY') }}">
+                        <button type="button" class="toggle" data-toggle="DASHBOARD_API_KEY">Show</button>
+                    </div>
+                    <div class="hint">Must match <span class="mono">API_KEY</span> in the dashboard's <span class="mono">config.php</span>.</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Advanced -->
+        <section class="card">
+            <div class="card-head"><h2>Advanced</h2></div>
+            <div class="card-body">
+                <div class="field">
+                    <label for="BME280_ADDRESS">BME280 I²C address</label>
+                    <select id="BME280_ADDRESS" name="BME280_ADDRESS">
+                        <option value="0x76" {% if fval('BME280_ADDRESS')|string == '0x76' %}selected{% endif %}>0x76 (default)</option>
+                        <option value="0x77" {% if fval('BME280_ADDRESS')|string == '0x77' %}selected{% endif %}>0x77</option>
+                    </select>
+                    <div class="hint">Only used for BME280 sensors. The script also tries the other address automatically.</div>
+                </div>
+            </div>
+        </section>
+
+        <div class="actions">
+            <button type="submit" name="action" value="save" class="btn btn-primary">Save settings</button>
+            <button type="submit" name="action" value="reboot" class="btn btn-warn" id="rebootBtn">Save &amp; reboot device</button>
+        </div>
+    </form>
+</div>
+
+<script>
+    // Show/hide secret fields
+    document.querySelectorAll('.secret .toggle').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var input = document.getElementById(btn.getAttribute('data-toggle'));
+            if (!input) return;
+            if (input.type === 'password') { input.type = 'text'; btn.textContent = 'Hide'; }
+            else { input.type = 'password'; btn.textContent = 'Show'; }
+        });
+    });
+
+    // Confirm before rebooting the whole device
+    var rebootBtn = document.getElementById('rebootBtn');
+    if (rebootBtn) rebootBtn.addEventListener('click', function (e) {
+        if (!confirm('Save settings and reboot this device now?')) e.preventDefault();
+    });
+
+    // Show where this page is being served from
+    var du = document.getElementById('deviceUrl');
+    if (du) du.textContent = 'Settings served at ' + window.location.host;
+
+    // Live monitoring status from /status
+    (function () {
+        var pill = document.getElementById('statusPill');
+        var text = document.getElementById('statusText');
+        if (!pill || !text) return;
+        fetch('/status', { cache: 'no-store' })
+            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+            .then(function (res) {
+                if (res.ok && res.j && res.j.status === 'ok') {
+                    pill.className = 'status-pill ok';
+                    text.textContent = res.j.sensor ? ('Monitoring · ' + res.j.sensor.toUpperCase()) : 'Monitoring';
+                } else {
+                    pill.className = 'status-pill err';
+                    text.textContent = (res.j && res.j.message) ? 'Error' : 'Not monitoring';
+                    if (res.j && res.j.message) pill.title = res.j.message;
+                }
+            })
+            .catch(function () {
+                pill.className = 'status-pill err';
+                text.textContent = 'Unavailable';
+            });
+    })();
+</script>
 </body>
 </html>

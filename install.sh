@@ -36,6 +36,27 @@ echo "  Directory: ${SCRIPT_DIR}"
 echo "  Log file:  ${REAL_HOME}/sensor.log"
 echo ""
 
+# --- Ensure live settings exist (idempotent; never clobbers existing) -------
+# The user's live config is gitignored so `git pull` + re-install can't lose
+# it. Seed it from the tracked template only when it's missing.
+LIVE_CONF="${SCRIPT_DIR}/SingleSensorSettings.local.conf"
+TEMPLATE_CONF="${SCRIPT_DIR}/SingleSensorSettings.conf"
+if [ -f "$LIVE_CONF" ]; then
+    echo "Existing settings found (SingleSensorSettings.local.conf) — left untouched."
+elif [ -f "$TEMPLATE_CONF" ]; then
+    cp "$TEMPLATE_CONF" "$LIVE_CONF"
+    echo "Created SingleSensorSettings.local.conf from the template."
+else
+    echo "No template found; the service will create default settings on first run."
+fi
+# The service runs as ${REAL_USER}, so it must own and be able to write its
+# settings. Lock the file down — it holds the Slack token and dashboard key.
+if [ -f "$LIVE_CONF" ]; then
+    chown "${REAL_USER}" "$LIVE_CONF" 2>/dev/null || true
+    chmod 600 "$LIVE_CONF" 2>/dev/null || true
+fi
+echo ""
+
 # --- Remove the legacy service if present (safe no-op on fresh installs) ---
 if systemctl list-unit-files "${LEGACY_SERVICE_NAME}.service" 2>/dev/null | grep -q "${LEGACY_SERVICE_NAME}"; then
     echo "Found legacy ${LEGACY_SERVICE_NAME} service – removing it first..."
