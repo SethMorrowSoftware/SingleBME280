@@ -14,7 +14,8 @@ import {
 } from './modules/state.js';
 import { render } from './modules/render.js';
 import { bindPanelDragAndDrop, bindFeedDragAndDrop } from './modules/dragdrop.js';
-import { initManageModal } from './modules/manage.js';
+import { initManageModal, openManageModal } from './modules/manage.js';
+import { initAlerts, updateAlertChrome, refreshAlertsModalIfOpen } from './modules/alerts.js';
 import { fetchSensors, fetchReadings } from './modules/api.js';
 
 const AUTO_REFRESH_MS = 60000;
@@ -26,6 +27,7 @@ let currentRange   = '24h';
 let autoTimer      = null;
 let cachedSensors  = null;
 let cachedReadings = null;
+let cachedDefaults = {};
 
 // ---------------------------------------------------------------------
 // DOM refs
@@ -51,7 +53,14 @@ loadState();
 
 initManageModal({
     getSensors: () => cachedSensors || [],
+    getDefaults: () => cachedDefaults || {},
     onSensorDeleted: () => fetchAll(),
+    onSensorsChanged: () => fetchAll(),
+});
+
+initAlerts({
+    getSensors: () => cachedSensors || [],
+    openManage: () => openManageModal(),
 });
 
 bindTopbar();
@@ -231,10 +240,15 @@ function fetchAll() {
     if (refreshBtn) refreshBtn.classList.add('spinning');
 
     Promise.all([fetchSensors(), fetchReadings(currentRange)])
-        .then(([sensors, readings]) => {
-            cachedSensors = sensors || [];
+        .then(([sensorsRes, readings]) => {
+            cachedSensors = (sensorsRes && sensorsRes.sensors) || [];
+            cachedDefaults = (sensorsRes && sensorsRes.defaults) || {};
             cachedReadings = readings || { sensors: {} };
             rerender();
+            // Update the bell badge + offline-alert banner, and refresh the
+            // alerts modal if the user has it open.
+            updateAlertChrome(cachedSensors);
+            refreshAlertsModalIfOpen();
             // Persist any freshly-initialized panel states
             saveState();
             clearError();

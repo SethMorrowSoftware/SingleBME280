@@ -9,7 +9,7 @@
 
 import {
     esc, timeAgo, fmt, calcStats, sensorUrl, feedsForSensor,
-    extractFeedSeries, CHART_COLORS, rangeLabel, rangeLabelShort,
+    extractFeedSeries, CHART_COLORS, rangeLabel, rangeLabelShort, formatDuration,
 } from './utils.js';
 import {
     getPanelState, getFeedState, isEditMode, sortSensors, sortFeeds,
@@ -73,6 +73,21 @@ export function render(root, sensors, readingsData, sensorCountEl, currentRange)
 }
 
 // ------------------------------------------------------------------
+// Alert indicators (shared by glance cards + panel headers)
+// ------------------------------------------------------------------
+function alertIndicators(sensor) {
+    const a = sensor && sensor.alerts;
+    if (!a || !a.enabled) return '';
+    if (a.alerting) {
+        const dur = sensor.offline_for_minutes != null ? formatDuration(sensor.offline_for_minutes) : '';
+        return '<span class="alert-pill" title="Offline alert active">' + iconBell() +
+               'ALERT' + (dur ? ' <span class="alert-pill-dur">' + esc(dur) + '</span>' : '') + '</span>';
+    }
+    // Armed (alerts enabled, not currently firing)
+    return '<span class="alert-armed" title="Offline alerts armed (' + esc(formatDuration(a.effective_minutes)) + ' threshold)">' + iconBell() + '</span>';
+}
+
+// ------------------------------------------------------------------
 // Glance (at-a-glance cards)
 // ------------------------------------------------------------------
 function buildGlanceSection(sensors) {
@@ -90,11 +105,15 @@ function buildGlanceSection(sensors) {
         const hum  = s.latest && s.latest.humidity       !== null ? fmt(s.latest.humidity, 0, '%') : '--';
         const co2  = s.latest && s.latest.co2            !== null ? fmt(s.latest.co2, 0, '') : null;
         const url  = sensorUrl(s);
+        const alerting = s.alerts && s.alerts.alerting;
+        const cardClass = offClass + (alerting ? ' alerting' : '');
 
-        html += '<div class="glance-card' + offClass + '" data-scroll="panel-' + esc(s.sensor_id) + '">';
+        html += '<div class="glance-card' + cardClass + '" data-scroll="panel-' + esc(s.sensor_id) + '">';
         html += '<div class="glance-card-top">';
         html += '<span class="glance-name">' + esc(s.location_name) + '</span>';
+        html += '<span class="glance-top-right">' + alertIndicators(s);
         html += '<span class="glance-badge ' + badgeClass + '">' + esc((s.sensor_type || '').toUpperCase()) + '</span>';
+        html += '</span>';
         html += '</div>';
         html += '<div class="glance-values">';
         html += '<span class="gv-temp">' + temp + '</span>';
@@ -125,12 +144,13 @@ function buildPanelHTML(sensor, sensorReadings, range) {
     const collClass = state.collapsed ? ' collapsed' : '';
     const url = sensorUrl(sensor);
     const latest = (sensor && sensor.latest) ? sensor.latest : {};
+    const alerting = sensor.alerts && sensor.alerts.alerting;
 
     const allFeeds = feedsForSensor(sensor);
     const orderedFeeds = sortFeeds(sid, allFeeds);
     const data = (sensorReadings && sensorReadings.data) ? sensorReadings.data : [];
 
-    let html = '<div class="sensor-panel' + (edit ? ' edit-mode' : '') + '"' +
+    let html = '<div class="sensor-panel' + (edit ? ' edit-mode' : '') + (alerting ? ' alerting' : '') + '"' +
                ' id="panel-' + esc(sid) + '"' +
                ' data-sensor-id="' + esc(sid) + '"' +
                (edit ? ' draggable="true"' : '') + '>';
@@ -144,6 +164,7 @@ function buildPanelHTML(sensor, sensorReadings, range) {
     html += '<span class="panel-name">' + esc(sensor.location_name) + '</span>';
     html += '<span class="glance-badge ' + badgeClass + '">' + esc((sensor.sensor_type || '').toUpperCase()) + '</span>';
     html += '<div class="panel-meta">';
+    html += alertIndicators(sensor);
     html += '<span class="range-tag" title="Min / Max / Avg are calculated over the ' + esc(rangeLabel(range)) + '">' + esc(rangeLabelShort(range)) + '</span>';
     html += '<span class="panel-status"><span class="status-dot ' + onClass + '"></span>' + onText + '</span>';
     html += '<span class="panel-last-seen">' + esc(timeAgo(sensor.last_seen)) + '</span>';
@@ -351,4 +372,7 @@ function iconGrip() {
 }
 function iconEye() {
     return '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 8S4 3 8 3s6.5 5 6.5 5-2.5 5-6.5 5-6.5-5-6.5-5z"/><circle cx="8" cy="8" r="2"/><path d="M2 14L14 2"/></svg>';
+}
+function iconBell() {
+    return '<svg class="bell-ico" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M8 2a3.2 3.2 0 0 0-3.2 3.2c0 3.3-1.3 4.3-1.3 4.3h9s-1.3-1-1.3-4.3A3.2 3.2 0 0 0 8 2z"/><path d="M6.7 12a1.4 1.4 0 0 0 2.6 0" stroke-linecap="round"/></svg>';
 }

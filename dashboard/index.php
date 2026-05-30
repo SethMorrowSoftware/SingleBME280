@@ -49,6 +49,13 @@ auth_require_login('login.php');
                     <rect x="2" y="2" width="12" height="12" rx="2"/>
                 </svg>
             </button>
+            <button class="icon-btn alerts-btn" id="alertsBtn" title="Alerts">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+                    <path d="M8 1.5a4 4 0 0 0-4 4c0 4-1.6 5.2-1.6 5.2h11.2S12 9.5 12 5.5a4 4 0 0 0-4-4z"/>
+                    <path d="M6.3 13a1.8 1.8 0 0 0 3.4 0" stroke-linecap="round"/>
+                </svg>
+                <span class="alert-count-badge" id="alertCountBadge"></span>
+            </button>
             <button class="icon-btn" id="manageBtn" title="Manage sensors">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="8" cy="8" r="2"/><path d="M8 2v2M8 12v2M2 8h2M12 8h2M3.8 3.8l1.4 1.4M10.8 10.8l1.4 1.4M3.8 12.2l1.4-1.4M10.8 5.2l1.4-1.4" stroke-linecap="round"/>
@@ -85,6 +92,9 @@ auth_require_login('login.php');
     </div>
 </div>
 
+<!-- Offline-alert banner (populated by alerts.js when sensors are alerting) -->
+<div class="alert-banner" id="alertBanner" role="alert" aria-live="assertive"></div>
+
 <!-- Main content: dynamically populated by JS -->
 <div class="main" id="mainContent">
     <div class="loading-state" id="globalLoading">
@@ -120,6 +130,27 @@ auth_require_login('login.php');
         <div class="modal-footer">
             <button class="btn btn-secondary" id="deleteCancelBtn">Cancel</button>
             <button class="btn btn-danger" id="deleteConfirmBtn">Remove Sensor</button>
+        </div>
+    </div>
+</div>
+
+<!-- Alerts modal (active alerts + history) -->
+<div class="modal-overlay" id="alertsModal">
+    <div class="modal modal-lg">
+        <div class="modal-header">
+            <h2>Alerts</h2>
+            <div class="modal-header-actions">
+                <button class="icon-btn" id="alertsRefreshBtn" title="Refresh alerts">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 8A6 6 0 1 1 8 2" stroke-linecap="round"/>
+                        <path d="M14 2v4h-4" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+                <button class="modal-close" id="alertsModalClose">&times;</button>
+            </div>
+        </div>
+        <div class="modal-body" id="alertsModalBody">
+            <!-- Populated by alerts.js -->
         </div>
     </div>
 </div>

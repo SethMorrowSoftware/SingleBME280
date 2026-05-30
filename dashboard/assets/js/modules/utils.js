@@ -80,6 +80,30 @@ export function fmt(v, decimals, unit) {
     return v.toFixed(decimals !== undefined ? decimals : 1) + (unit || '');
 }
 
+/** Human-readable duration from a minute count, e.g. 135 -> "2h 15m". */
+export function formatDuration(minutes) {
+    if (minutes === null || minutes === undefined || isNaN(minutes)) return '';
+    const m = Math.max(0, Math.floor(minutes));
+    if (m < 60) return m + 'm';
+    const h = Math.floor(m / 60);
+    const rem = m % 60;
+    if (h < 24) return rem ? (h + 'h ' + rem + 'm') : (h + 'h');
+    const d = Math.floor(h / 24);
+    const hr = h % 24;
+    return hr ? (d + 'd ' + hr + 'h') : (d + 'd');
+}
+
+/** Format an ISO timestamp as a compact local date+time. */
+export function formatDateTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleString([], {
+        month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+    });
+}
+
 /**
  * Compute Min / Max / Avg over a series of values, plus a Current value.
  *
