@@ -57,16 +57,24 @@ sudo raspi-config   # Interface Options → I2C → Enable
 
 ## Pi Zero Setup
 
-### 1. Install dependencies
+### 1. Dependencies
+
+`install.sh` (step 3) installs the Python dependencies for you — they're listed
+in `requirements.txt` — so you can skip ahead to cloning. Install them by hand
+only for development, or to run `python3 SingleSensor.py` directly.
+
+If you do install manually, note two things: the service runs the **system**
+interpreter (`/usr/bin/python3`), so the packages must land there (a per-user
+venv won't be seen); and Raspberry Pi OS Bookworm (Python 3.11+) blocks
+system-wide `pip` by default (PEP 668), so pass `--break-system-packages`. Run
+this from inside the cloned repo (after step 2):
 
 ```bash
 sudo apt update && sudo apt install -y python3-pip
+sudo python3 -m pip install --break-system-packages -r requirements.txt
 
-# For BME280 sensors:
-pip3 install flask smbus2 RPi.bme280 slack_sdk configparser
-
-# For SCD40 sensors:
-pip3 install flask adafruit-circuitpython-scd4x slack_sdk configparser
+# SCD40 sensors also need:
+sudo python3 -m pip install --break-system-packages adafruit-circuitpython-scd4x
 ```
 
 ### 2. Clone and configure
@@ -355,7 +363,8 @@ SingleSensor/
 ├── SingleSensorSettings.conf    # Seed template (tracked)
 ├── SingleSensorSettings.local.conf  # Live per-device settings (gitignored, auto-created)
 ├── singlesensor.service         # systemd unit for auto-start on boot
-├── install.sh                   # One-command installer for the systemd service
+├── requirements.txt             # Python dependencies (installed by install.sh)
+├── install.sh                   # Installer: deps + systemd service + log perms
 ├── templates/
 │   └── settings.html            # Pi Zero web settings UI (self-contained dark theme)
 ├── readme.md

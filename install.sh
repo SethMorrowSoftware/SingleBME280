@@ -36,6 +36,30 @@ echo "  Directory: ${SCRIPT_DIR}"
 echo "  Log file:  ${REAL_HOME}/sensor.log"
 echo ""
 
+# --- Install Python dependencies for the service's interpreter -------------
+# The unit runs the system python (/usr/bin/python3), so deps must be visible
+# there — a per-user venv wouldn't help. On Raspberry Pi OS Bookworm, pip
+# refuses system-wide installs (PEP 668) unless --break-system-packages is
+# passed, so add the flag when this pip supports it (harmless otherwise).
+PYTHON_BIN="/usr/bin/python3"
+REQUIREMENTS="${SCRIPT_DIR}/requirements.txt"
+if [ -f "$REQUIREMENTS" ]; then
+    echo "Installing Python dependencies (${PYTHON_BIN})..."
+    if ! "$PYTHON_BIN" -m pip --version >/dev/null 2>&1; then
+        echo "  pip not found — installing python3-pip via apt..."
+        apt-get update && apt-get install -y python3-pip
+    fi
+    PIP_FLAGS=""
+    if "$PYTHON_BIN" -m pip install --help 2>/dev/null | grep -q -- '--break-system-packages'; then
+        PIP_FLAGS="--break-system-packages"
+    fi
+    "$PYTHON_BIN" -m pip install $PIP_FLAGS -r "$REQUIREMENTS"
+    echo "  Done."
+else
+    echo "Warning: ${REQUIREMENTS} not found; skipping dependency install."
+fi
+echo ""
+
 # --- Ensure live settings exist (idempotent; never clobbers existing) -------
 # The user's live config is gitignored so `git pull` + re-install can't lose
 # it. Seed it from the tracked template only when it's missing.
@@ -55,6 +79,18 @@ if [ -f "$LIVE_CONF" ]; then
     chown "${REAL_USER}" "$LIVE_CONF" 2>/dev/null || true
     chmod 600 "$LIVE_CONF" 2>/dev/null || true
 fi
+echo ""
+
+# --- Reclaim ownership of runtime log files for the service user -----------
+# A one-off `sudo python3 SingleSensor.py` test (or the old root @reboot cron)
+# can leave *.log files in the install dir owned by root. The service runs as
+# ${REAL_USER}, so hand them back — otherwise its logging setup hits
+# "PermissionError: ... app.log" on startup.
+shopt -s nullglob
+for f in "${SCRIPT_DIR}"/*.log "${SCRIPT_DIR}"/*.log.*; do
+    chown "${REAL_USER}" "$f" 2>/dev/null || true
+done
+shopt -u nullglob
 echo ""
 
 # --- Remove the legacy service if present (safe no-op on fresh installs) ---

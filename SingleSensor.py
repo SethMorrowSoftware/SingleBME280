@@ -45,15 +45,38 @@ _CONFIG_LOCK = Lock()
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
-handler = RotatingFileHandler('app.log', maxBytes=5 * 1024 * 1024, backupCount=3)
-handler.setLevel(logging.DEBUG)
+# All logs live in the install dir. If an earlier run left one owned by another
+# user (e.g. a one-off `sudo python3 SingleSensor.py` test), opening it raises
+# PermissionError. A logging glitch must never crash the service, so fall back
+# to console output — which systemd captures in sensor.log — instead.
+def _rotating_handler_or_console(path, formatter, **kwargs):
+    """RotatingFileHandler for `path`, or a console handler if it can't open."""
+    try:
+        file_handler = RotatingFileHandler(path, **kwargs)
+    except OSError as exc:
+        sys.stderr.write(
+            f"WARNING: could not open log file {path!r} ({exc}); "
+            "logging to console instead.\n"
+        )
+        file_handler = logging.StreamHandler()
+    file_handler.setFormatter(formatter)
+    return file_handler
+
+
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-handler.setFormatter(formatter)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-logger.addHandler(handler)
+# The console handler is always present (systemd captures it in sensor.log); the
+# rotating app.log is supplementary, so skip it rather than crash if it won't open.
 logger.addHandler(logging.StreamHandler())
+try:
+    _app_handler = RotatingFileHandler('app.log', maxBytes=5 * 1024 * 1024, backupCount=3)
+    _app_handler.setLevel(logging.DEBUG)
+    _app_handler.setFormatter(formatter)
+    logger.addHandler(_app_handler)
+except OSError as exc:
+    logger.warning("Could not open app.log (%s); using console logging only.", exc)
 # Prevent root logger from re-emitting our records (systemd would duplicate them).
 logger.propagate = False
 
@@ -62,18 +85,16 @@ ERROR_LOG_FILE = "error_log.log"
 
 # Rotating file handlers for the two data/error logs so they don't fill the SD card.
 # 2 MB each, 2 backups = max ~6 MB per log.
-_readings_handler = RotatingFileHandler(LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=2)
-_readings_handler.setFormatter(logging.Formatter('%(message)s'))
 _readings_logger = logging.getLogger('readings')
 _readings_logger.setLevel(logging.INFO)
-_readings_logger.addHandler(_readings_handler)
+_readings_logger.addHandler(_rotating_handler_or_console(
+    LOG_FILE, logging.Formatter('%(message)s'), maxBytes=2 * 1024 * 1024, backupCount=2))
 _readings_logger.propagate = False
 
-_error_handler = RotatingFileHandler(ERROR_LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=2)
-_error_handler.setFormatter(logging.Formatter('%(message)s'))
 _error_logger = logging.getLogger('errors')
 _error_logger.setLevel(logging.ERROR)
-_error_logger.addHandler(_error_handler)
+_error_logger.addHandler(_rotating_handler_or_console(
+    ERROR_LOG_FILE, logging.Formatter('%(message)s'), maxBytes=2 * 1024 * 1024, backupCount=2))
 _error_logger.propagate = False
 
 # Silence Flask/Werkzeug's per-request access log – it's noisy and not useful
