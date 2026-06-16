@@ -1,0 +1,21 @@
+# Python dependencies for SingleSensor.
+#
+# install.sh installs these automatically into the system python that the
+# systemd service runs (/usr/bin/python3). To install by hand on Raspberry Pi
+# OS Bookworm, pip needs --break-system-packages (see the README):
+#
+#   sudo python3 -m pip install --break-system-packages -r requirements.txt
+
+# Always required (the settings web UI / app core).
+flask
+slack_sdk
+
+# BME280 sensors (temperature + humidity) — the default sensor.
+smbus2
+RPi.bme280
+
+# SCD40 sensors (temperature + humidity + CO2) also need the line below.
+# It pulls in the Adafruit Blinka stack, so it's left optional/commented to
+# keep BME280-only installs lean; uncomment it (or install it separately) if
+# you have an SCD40:
+# adafruit-circuitpython-scd4x
