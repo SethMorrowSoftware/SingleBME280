@@ -36,6 +36,53 @@ echo "  Directory: ${SCRIPT_DIR}"
 echo "  Log file:  ${REAL_HOME}/sensor.log"
 echo ""
 
+# --- Install Python dependencies -------------------------------------------
+# The service just runs `python3 SingleSensor.py`, so every module that script
+# imports has to be present system-wide or it dies on startup with
+# "ModuleNotFoundError: No module named 'flask'". We install both sensor stacks
+# (BME280 + SCD40) because the sensor is auto-detected at runtime and may not
+# even be attached yet when this runs.
+#
+#   flask                          - local web settings UI (always imported)
+#   slack_sdk                      - Slack alerts
+#   smbus2 + RPi.bme280            - BME280 (temp + humidity)
+#   adafruit-circuitpython-scd4x   - SCD40 (temp + humidity + CO2)
+#   adafruit-blinka                - provides `board` for the SCD40 path
+echo "Installing Python dependencies (this can take a few minutes on a Pi Zero)..."
+
+# pip and the I2C tools the sensors need. Non-fatal: if apt is offline but the
+# packages are already present, the pip step below still succeeds.
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y      2>/dev/null || true
+apt-get install -y python3-pip i2c-tools 2>/dev/null || true
+
+# Bookworm and newer mark the system Python as "externally managed" (PEP 668),
+# which aborts a plain `pip install`. Pass --break-system-packages when pip
+# understands it; on older pip that lacks the flag we simply omit it.
+PIP_BREAK=""
+if python3 -m pip install --help 2>/dev/null | grep -q -- '--break-system-packages'; then
+    PIP_BREAK="--break-system-packages"
+fi
+
+# Installed as root, so they land in the system site-packages that the
+# service's /usr/bin/python3 reads for every user (including ${REAL_USER}).
+PY_PACKAGES="flask slack_sdk smbus2 RPi.bme280 adafruit-circuitpython-scd4x adafruit-blinka"
+if ! python3 -m pip install $PIP_BREAK $PY_PACKAGES; then
+    echo ""
+    echo "Error: Failed to install Python dependencies."
+    echo "       Check the Pi's network connection and re-run: sudo bash ${0}"
+    exit 1
+fi
+echo "Python dependencies installed."
+echo ""
+
+# Enable the I2C bus the sensors hang off of (idempotent; needs a reboot to
+# fully take effect if it was previously off). Best-effort — skipped on systems
+# without raspi-config.
+if command -v raspi-config >/dev/null 2>&1; then
+    raspi-config nonint do_i2c 0 2>/dev/null || true
+fi
+
 # --- Ensure live settings exist (idempotent; never clobbers existing) -------
 # The user's live config is gitignored so `git pull` + re-install can't lose
 # it. Seed it from the tracked template only when it's missing.
@@ -55,6 +102,18 @@ if [ -f "$LIVE_CONF" ]; then
     chown "${REAL_USER}" "$LIVE_CONF" 2>/dev/null || true
     chmod 600 "$LIVE_CONF" 2>/dev/null || true
 fi
+echo ""
+
+# --- Make the service user own the install directory -----------------------
+# The service runs as ${REAL_USER} with this directory as its WorkingDirectory,
+# and SingleSensor.py writes its logs here (app.log, sensor_readings.log,
+# error_log.log) plus rotated backups. If the repo was cloned as root, or the
+# script was ever run with sudo, those files end up root-owned and the
+# user-run service dies with:
+#   PermissionError: [Errno 13] Permission denied: '.../app.log'
+# Re-home the tree to ${REAL_USER} so it can read its code and write its logs.
+REAL_GROUP="$(id -gn "${REAL_USER}" 2>/dev/null || echo "${REAL_USER}")"
+chown -R "${REAL_USER}:${REAL_GROUP}" "${SCRIPT_DIR}" 2>/dev/null || true
 echo ""
 
 # --- Remove the legacy service if present (safe no-op on fresh installs) ---
@@ -109,3 +168,6 @@ echo "  sudo systemctl restart ${SERVICE_NAME}   # restart"
 echo "  sudo systemctl stop ${SERVICE_NAME}      # stop"
 echo "  journalctl -u ${SERVICE_NAME} -f         # follow logs"
 echo "  tail -f ${REAL_HOME}/sensor.log          # follow sensor log"
+echo ""
+echo "If the sensor isn't detected, I2C may have just been enabled for the"
+echo "first time — reboot the Pi (sudo reboot) and check the status again."

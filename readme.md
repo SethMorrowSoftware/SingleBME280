@@ -59,14 +59,22 @@ sudo raspi-config   # Interface Options → I2C → Enable
 
 ### 1. Install dependencies
 
+**You normally don't need to do this manually** — `install.sh` (step 3 below)
+installs every Python dependency for both sensor types, enables I2C, and starts
+the service. Run it and you're done.
+
+If you want to install the libraries by hand (e.g. to test before installing the
+service), the commands are below. On Raspberry Pi OS Bookworm and newer the
+system Python is "externally managed" (PEP 668), so add `--break-system-packages`:
+
 ```bash
-sudo apt update && sudo apt install -y python3-pip
+sudo apt update && sudo apt install -y python3-pip i2c-tools
 
 # For BME280 sensors:
-pip3 install flask smbus2 RPi.bme280 slack_sdk configparser
+pip3 install --break-system-packages flask smbus2 RPi.bme280 slack_sdk
 
 # For SCD40 sensors:
-pip3 install flask adafruit-circuitpython-scd4x slack_sdk configparser
+pip3 install --break-system-packages flask adafruit-circuitpython-scd4x adafruit-blinka slack_sdk
 ```
 
 ### 2. Clone and configure
@@ -117,7 +125,7 @@ bme280_address = 0x76                 # 0x76 or 0x77
 sudo bash install.sh
 ```
 
-The install script automatically detects your user and install path, generates the systemd service, removes any old `@reboot` cron entries, and (on upgrade) removes the legacy `singlebme280` service before starting `singlesensor`.
+The install script installs the Python dependencies for both sensor types, enables I2C, automatically detects your user and install path, generates the systemd service, ensures the service user owns its log files, removes any old `@reboot` cron entries, and (on upgrade) removes the legacy `singlebme280` service before starting `singlesensor`.
 
 Check status:
 ```bash
